@@ -1,0 +1,21 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>bronty13</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+  body { font: 16px/1.6 -apple-system, system-ui, sans-serif; max-width: 40rem; margin: 4rem auto; padding: 0 1.5rem; }
+  code { background: #f4f4f5; padding: .15em .4em; border-radius: 4px; font-size: .9em; }
+  pre { background: #f4f4f5; padding: 1rem; border-radius: 6px; overflow-x: auto; }
+  @media (prefers-color-scheme: dark) {
+    body { background: #18181b; color: #e4e4e7; }
+    code, pre { background: #27272a; }
+  }
+</style>
+<h1>Install scripts</h1>
+<p>Short, typeable URLs for tools published from
+   <a href="https://github.com/bronty13/phantomlives-releases">phantomlives-releases</a>.</p>
+<h2><code>/bau</code> — brew-autoupdate</h2>
+<p>Scheduled Homebrew updates on macOS, with logs and a <code>brew-logs</code> viewer.</p>
+<pre><code>curl -fsSL https://bronty13.github.io/bau | bash</code></pre>
+<p>This serves the same <code>bootstrap.sh</code> published to the release feed; it verifies
+   its download against a SHA-256 checksum before installing anything.</p>

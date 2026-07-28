@@ -1,0 +1,256 @@
+#!/usr/bin/env bash
+# ============================================================================
+#
+#  BREW-AUTOUPDATE PUBLIC BOOTSTRAP INSTALLER
+#
+#  File:     bootstrap.sh
+#  Version:  2.7.0
+#  License:  MIT
+#  Requires: macOS, Homebrew, bash 3.2+, curl, tar, shasum
+#
+#  Description:
+#    Installs brew-autoupdate on a machine that has NO checkout of the
+#    source repository. It fetches the current release from the public
+#    rolling feed, verifies its SHA-256 checksum, and hands off to the
+#    real install.sh inside the downloaded tarball.
+#
+#    This exists because install.sh is checkout-bound: it copies its four
+#    sibling files out of its own directory and refuses to run without
+#    them. The source monorepo is private, so an anonymous user has no way
+#    to obtain that directory. The self-update feed on the PUBLIC
+#    bronty13/phantomlives-releases repo already carries exactly those
+#    files (that is how installed daemons update themselves), so this
+#    script reuses that feed rather than introducing a second channel.
+#
+#  Usage — the public one-liner:
+#
+#    curl -fsSL https://github.com/bronty13/phantomlives-releases/releases/download/brew-autoupdate-updater-feed/bootstrap.sh | bash
+#
+#    Every argument is forwarded verbatim to install.sh, so the full
+#    installer CLI works through the pipe:
+#
+#      ... | bash -s -- --reinstall
+#      ... | bash -s -- --uninstall
+#      ... | bash -s -- --help
+#
+#    Bootstrap-only flags (handled here, never forwarded):
+#      --bootstrap-version   print this script's version and exit
+#      --bootstrap-help      explain the bootstrap itself and exit
+#
+#  What it does NOT do:
+#    Nothing about ongoing updates. Once installed, the daemon's own
+#    self_update() keeps itself current from the same feed. This script
+#    is a first-install path only — running it again is harmless but
+#    unnecessary.
+#
+#  Safety:
+#    - Prerequisites are checked BEFORE anything is downloaded.
+#    - The tarball is verified against the feed's SHA256SUMS and the
+#      extracted install.sh is syntax-checked before it is executed.
+#    - Everything lands in a temp dir that is removed on exit, success
+#      or failure. install.sh copies what it needs into
+#      ~/.config/brew-autoupdate/ and never refers back to this dir.
+#
+# ============================================================================
+
+set -euo pipefail
+
+# ============================================================================
+# VERSION
+# ============================================================================
+# Must match BAU_VERSION in brew-autoupdate.sh, brew-autoupdate-viewer.sh,
+# and install.sh — release.sh refuses to publish if they disagree.
+BAU_VERSION="2.7.0"
+
+# ============================================================================
+# FEED
+# ============================================================================
+# The rolling prerelease feed on the PUBLIC releases repo. The monorepo is
+# private, so this URL is the only one an anonymous fetch can reach.
+# Override for testing with BAU_FEED_URL=file:///path/to/fixture-feed.
+FEED_URL="${BAU_FEED_URL:-https://github.com/bronty13/phantomlives-releases/releases/download/brew-autoupdate-updater-feed}"
+
+# ============================================================================
+# TERMINAL FORMATTING
+# ============================================================================
+if [[ -t 1 ]]; then
+    RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
+    CYAN='\033[0;36m'; BOLD='\033[1m'; NC='\033[0m'
+else
+    RED=''; GREEN=''; YELLOW=''; CYAN=''; BOLD=''; NC=''
+fi
+
+info()    { echo -e "${CYAN}[INFO]${NC}    $*"; }
+success() { echo -e "${GREEN}[OK]${NC}      $*"; }
+warn()    { echo -e "${YELLOW}[WARN]${NC}    $*"; }
+error()   { echo -e "${RED}[ERROR]${NC}   $*" >&2; }
+
+section() {
+    echo
+    echo -e "${BOLD}── $* ──${NC}"
+}
+
+die() { error "$*"; exit 1; }
+
+# ============================================================================
+# BOOTSTRAP-ONLY FLAGS
+# ============================================================================
+show_bootstrap_help() {
+    cat <<EOF
+brew-autoupdate bootstrap installer v${BAU_VERSION}
+
+Fetches the current brew-autoupdate release from the public feed, verifies
+its checksum, and runs the real installer from it. Use this on a machine
+with no checkout of the source repository.
+
+  curl -fsSL ${FEED_URL}/bootstrap.sh | bash
+
+All other arguments are forwarded to install.sh:
+
+  ... | bash -s -- --reinstall         reinstall, resetting config to defaults
+  ... | bash -s -- --uninstall         remove everything
+  ... | bash -s -- --reload-schedule   regenerate the launchd plist
+  ... | bash -s -- --help              the installer's own help
+
+Bootstrap-only flags:
+  --bootstrap-help       this message
+  --bootstrap-version    print the bootstrap version and exit
+
+Environment:
+  BAU_FEED_URL           override the release feed (testing only)
+  BAU_NONINTERACTIVE=1   never prompt; leave stdin as given (CI, provisioning)
+EOF
+}
+
+for arg in "$@"; do
+    case "${arg}" in
+        --bootstrap-version) echo "${BAU_VERSION}"; exit 0 ;;
+        --bootstrap-help)    show_bootstrap_help;   exit 0 ;;
+    esac
+done
+
+# ============================================================================
+# PREREQUISITES  (checked before any download)
+# ============================================================================
+check_prerequisites() {
+    section "Checking prerequisites"
+
+    if [[ "$(uname -s)" != "Darwin" ]]; then
+        error "brew-autoupdate is macOS-only. Detected: $(uname -s)"
+        exit 1
+    fi
+    success "macOS detected ($(sw_vers -productVersion 2>/dev/null || echo 'unknown version'))"
+
+    local tool
+    for tool in curl tar shasum; do
+        command -v "${tool}" >/dev/null 2>&1 || die "Required tool not found: ${tool}"
+    done
+    success "curl, tar and shasum available"
+
+    # Mirror install.sh's three-way detection exactly, so the bootstrap never
+    # rejects a machine the real installer would have accepted (Homebrew is
+    # frequently absent from PATH in a non-login shell).
+    if command -v brew >/dev/null 2>&1; then
+        success "Homebrew found at $(brew --prefix)"
+    elif [[ -x /opt/homebrew/bin/brew ]]; then
+        success "Homebrew found at /opt/homebrew (not in PATH — installer will configure)"
+    elif [[ -x /usr/local/bin/brew ]]; then
+        success "Homebrew found at /usr/local (not in PATH — installer will configure)"
+    else
+        error "Homebrew is not installed."
+        error "Install it first: https://brew.sh"
+        exit 1
+    fi
+}
+
+# ============================================================================
+# DOWNLOAD + VERIFY
+# ============================================================================
+STAGE=""
+cleanup() { [[ -n "${STAGE}" && -d "${STAGE}" ]] && rm -rf "${STAGE}"; }
+trap cleanup EXIT
+
+fetch() {
+    # fetch <remote-name> <local-path> <timeout-seconds>
+    curl -fsSL --max-time "$3" -o "$2" "${FEED_URL}/$1" \
+        || die "Could not fetch $1 from the release feed. Check your network, then retry."
+}
+
+download_release() {
+    section "Fetching brew-autoupdate from the public release feed"
+    info "Feed: ${FEED_URL}"
+
+    STAGE="$(mktemp -d "${TMPDIR:-/tmp}/bau-bootstrap.XXXXXX")"
+
+    fetch VERSION "${STAGE}/VERSION" 30
+    REMOTE_VER="$(head -1 "${STAGE}/VERSION" | tr -d '[:space:]')"
+    [[ "${REMOTE_VER}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] \
+        || die "Release feed returned a malformed version: '${REMOTE_VER}'"
+    success "Feed is serving v${REMOTE_VER}"
+
+    local tarball="brew-autoupdate-${REMOTE_VER}.tar.gz"
+    info "Downloading ${tarball}..."
+    fetch "${tarball}"  "${STAGE}/${tarball}" 120
+    fetch SHA256SUMS    "${STAGE}/SHA256SUMS" 30
+
+    info "Verifying checksum..."
+    # SHA256SUMS covers only the current tarball, and we cd into STAGE so the
+    # bare filename in it resolves. A mismatch means a corrupt or tampered
+    # download — refuse to run anything from it.
+    ( cd "${STAGE}" && shasum -a 256 -c SHA256SUMS >/dev/null 2>&1 ) \
+        || die "Checksum verification FAILED for ${tarball}. Refusing to install."
+    success "Checksum verified"
+
+    info "Extracting..."
+    tar -xzf "${STAGE}/${tarball}" -C "${STAGE}" || die "Could not extract ${tarball}"
+
+    [[ -f "${STAGE}/install.sh" ]] \
+        || die "Release tarball is missing install.sh — the feed may be corrupt."
+    bash -n "${STAGE}/install.sh" \
+        || die "install.sh from the feed failed a syntax check. Refusing to run it."
+    success "Release v${REMOTE_VER} unpacked and sanity-checked"
+}
+
+# ============================================================================
+# HAND OFF TO THE REAL INSTALLER
+# ============================================================================
+run_installer() {
+    section "Handing off to install.sh v${REMOTE_VER}"
+    echo
+
+    # When invoked as `curl ... | bash`, stdin is the pipe, not the terminal.
+    # install.sh prompts twice — do_verify ("Run a test update now?") and
+    # --uninstall ("Remove everything?") — with `read -r -p`. Reading those
+    # from the pipe gets EOF, which silently answers "yes" to the first and
+    # "no" to the second. Re-point stdin at the controlling terminal so the
+    # prompts reach the human who typed the one-liner.
+    #
+    # BAU_NONINTERACTIVE=1 suppresses that, for automated installs (CI, a
+    # provisioning script, the test suite) where no human is watching and
+    # blocking on a prompt would hang. stdin is then left exactly as given,
+    # so a caller can pipe answers in deliberately.
+    if [[ "${BAU_NONINTERACTIVE:-}" != "1" && ! -t 0 && -r /dev/tty ]]; then
+        bash "${STAGE}/install.sh" "$@" < /dev/tty
+    else
+        bash "${STAGE}/install.sh" "$@"
+    fi
+}
+
+# ============================================================================
+# MAIN
+# ============================================================================
+main() {
+    echo
+    echo -e "${BOLD}brew-autoupdate bootstrap installer v${BAU_VERSION}${NC}"
+
+    check_prerequisites
+    download_release
+
+    if [[ "${REMOTE_VER}" != "${BAU_VERSION}" ]]; then
+        warn "This bootstrap is v${BAU_VERSION} but the feed serves v${REMOTE_VER} — installing v${REMOTE_VER}."
+    fi
+
+    run_installer "$@"
+}
+
+main "$@"
