@@ -1,0 +1,167 @@
+#!/bin/bash
+# ============================================================================
+# PurpleMonitor — public one-line installer
+#
+#     curl -fsSL https://bronty13.github.io/pmon | bash
+#
+# For installing PurpleMonitor on a Mac you can't copy files to — a fresh
+# machine, or one you only reach by reading a URL aloud. The release-asset URL
+# is ~120 characters, which is unusable typed from memory; this is the short
+# front door for it.
+#
+# WHAT IT DOES
+#   1. Reads the PUBLIC Sparkle appcast to find the current release. The feed is
+#      authoritative — this script hard-codes no version, so it can never
+#      advertise a stale one, and it installs exactly what auto-update would.
+#   2. Downloads that release zip from the public releases repo.
+#   3. VERIFIES it before installing: strict codesign, a stapled notarization
+#      ticket, Gatekeeper acceptance, and that the signer is the expected Apple
+#      Developer Team. It refuses to install anything that fails — a compromised
+#      feed cannot make it install someone else's app.
+#   4. Installs to /Applications and launches it.
+#
+# It never uses sudo, never disables Gatekeeper, and never strips quarantine to
+# dodge a check.
+#
+# Flags:  --installer-version   print this script's version and exit
+#         --no-open             install but don't launch
+#         --to <dir>            install somewhere other than /Applications
+# ============================================================================
+set -euo pipefail
+
+PMON_INSTALLER_VERSION="1.0.0"
+
+APP="PurpleMonitor"
+FEED_URL="https://raw.githubusercontent.com/bronty13/phantomlives-releases/main/PurpleMonitor/appcast.xml"
+# The release is signed by this Apple Developer Team. Pinning it is what makes a
+# hostile or hijacked feed unable to install a different vendor's app.
+EXPECTED_TEAM_ID="SRKV8T38CD"
+
+DEST_DIR="/Applications"
+OPEN_AFTER=1
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --installer-version) echo "$PMON_INSTALLER_VERSION"; exit 0 ;;
+        --no-open)           OPEN_AFTER=0; shift ;;
+        --to)                DEST_DIR="${2:?--to needs a directory}"; shift 2 ;;
+        -h|--help)           sed -n '2,27p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        *) echo "unknown option: $1" >&2; exit 2 ;;
+    esac
+done
+
+die()  { echo "✗ $*" >&2; exit 1; }
+note() { echo "  • $*"; }
+
+echo "== Installing $APP =="
+
+[ "$(uname -s)" = "Darwin" ] || die "PurpleMonitor is a macOS app; this is $(uname -s)."
+MACOS_MAJOR="$(sw_vers -productVersion | cut -d. -f1)"
+[ "${MACOS_MAJOR:-0}" -ge 14 ] 2>/dev/null \
+    || die "PurpleMonitor needs macOS 14 or later (this Mac is $(sw_vers -productVersion))."
+note "macOS $(sw_vers -productVersion) ✓"
+
+# ── Resolve the current release from the authoritative feed ─────────────────
+echo "== Finding the current release =="
+APPCAST="$(curl -fsSL --max-time 30 -H 'Cache-Control: no-cache' "$FEED_URL")" \
+    || die "could not reach the release feed:
+    $FEED_URL
+  Check this Mac's internet connection."
+
+# The newest release is the first <item>, so take the first match of each. Parsed
+# with grep/sed deliberately: a fresh Mac may have no python3 until the Command
+# Line Tools are installed, and requiring those to install an app is absurd.
+VERSION="$(printf '%s' "$APPCAST" | grep -o '<sparkle:shortVersionString>[^<]*' | head -1 | sed 's/.*>//')"
+ZIP_URL="$(printf '%s' "$APPCAST" | grep -o 'url="https://[^"]*\.zip"' | head -1 | sed 's/^url="//; s/"$//')"
+[ -n "$VERSION" ] || die "the release feed has no version entry yet — nothing to install."
+[ -n "$ZIP_URL" ]  || die "the release feed has no download for $VERSION."
+note "$APP $VERSION"
+
+# ── Download ────────────────────────────────────────────────────────────────
+WORK="$(mktemp -d)"
+trap 'rm -rf "$WORK"' EXIT
+echo "== Downloading =="
+curl -fsSL --max-time 300 -o "$WORK/app.zip" "$ZIP_URL" \
+    || die "download failed: $ZIP_URL"
+note "$(du -h "$WORK/app.zip" | cut -f1)"
+
+ditto -x -k "$WORK/app.zip" "$WORK/x" 2>/dev/null || die "the download is not a readable zip."
+NEW_APP="$WORK/x/$APP.app"
+[ -d "$NEW_APP" ] || die "the download did not contain $APP.app."
+
+# ── Verify BEFORE installing ────────────────────────────────────────────────
+# Every check here is a refusal, never a warning. Installing an unverified
+# binary on someone's Mac because a download "mostly looked right" is precisely
+# the failure this script exists to make impossible.
+echo "== Verifying =="
+
+codesign --verify --deep --strict "$NEW_APP" 2>/dev/null \
+    || die "the downloaded app fails signature verification — NOT installing."
+note "signature intact ✓"
+
+TEAM="$(codesign -dv "$NEW_APP" 2>&1 | sed -n 's/^TeamIdentifier=//p' | head -1)"
+[ "$TEAM" = "$EXPECTED_TEAM_ID" ] \
+    || die "signed by an unexpected Apple Developer Team: '${TEAM:-none}' (expected $EXPECTED_TEAM_ID).
+  This is what a hijacked feed would look like. NOT installing."
+note "signed by the expected developer ($TEAM) ✓"
+
+xcrun stapler validate "$NEW_APP" >/dev/null 2>&1 \
+    || die "no valid notarization ticket — NOT installing."
+note "notarized by Apple ✓"
+
+if spctl -a -t exec "$NEW_APP" >/dev/null 2>&1; then
+    note "Gatekeeper: accepted ✓"
+else
+    die "Gatekeeper rejects this build — NOT installing."
+fi
+
+# ── Install ─────────────────────────────────────────────────────────────────
+echo "== Installing to $DEST_DIR =="
+mkdir -p "$DEST_DIR" || die "cannot create $DEST_DIR"
+TARGET="$DEST_DIR/$APP.app"
+
+if [ -w "$DEST_DIR" ]; then
+    :
+else
+    die "no permission to write to $DEST_DIR.
+  Re-run with --to \"\$HOME/Applications\" to install just for this user."
+fi
+
+# Stop a running copy OF THE BUNDLE WE ARE REPLACING so it isn't a half-live
+# bundle mid-swap. Scoped to $TARGET, not to any PurpleMonitor anywhere: with
+# --to, killing an unrelated copy in /Applications would be a nasty surprise.
+RUNNING_EXEC="$TARGET/Contents/MacOS/$APP"
+if pgrep -f "$RUNNING_EXEC" >/dev/null 2>&1; then
+    note "quitting the running copy…"
+    pkill -f "$RUNNING_EXEC" 2>/dev/null || true
+    for _ in 1 2 3 4 5 6 7 8 9 10; do
+        pgrep -f "$RUNNING_EXEC" >/dev/null 2>&1 || break
+        sleep 0.5
+    done
+    pkill -9 -f "$RUNNING_EXEC" 2>/dev/null || true
+fi
+
+rm -rf "$TARGET"
+ditto --noextattr --norsrc "$NEW_APP" "$TARGET" || die "install to $TARGET failed."
+note "installed $TARGET"
+
+INSTALLED_VERSION="$(defaults read "$TARGET/Contents/Info.plist" CFBundleShortVersionString 2>/dev/null || echo '?')"
+[ "$INSTALLED_VERSION" = "$VERSION" ] \
+    || die "installed version is $INSTALLED_VERSION but the feed offered $VERSION — something went wrong."
+note "verified on disk: $APP $INSTALLED_VERSION ✓"
+
+[ "$OPEN_AFTER" = "1" ] && { open -n "$TARGET" 2>/dev/null || true; }
+
+cat <<DONE
+
+== Done ==
+  $APP $VERSION is installed in $DEST_DIR.
+
+  ONE MORE STEP — grant Full Disk Access, or most of the scan can't run:
+    System Settings → Privacy & Security → Full Disk Access → turn on PurpleMonitor
+  (PurpleMonitor's Settings → General has a button that opens that pane.)
+  Without it, the affected checks are reported as coverage gaps, never as
+  "nothing found" — but you'll be missing the most useful results.
+
+  It keeps itself up to date from here (PurpleMonitor → Check for Updates…).
+DONE
