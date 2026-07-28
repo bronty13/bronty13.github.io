@@ -14,10 +14,16 @@
 #      authoritative — this script hard-codes no version, so it can never
 #      advertise a stale one, and it installs exactly what auto-update would.
 #   2. Downloads that release zip from the public releases repo.
-#   3. VERIFIES it before installing: strict codesign, a stapled notarization
-#      ticket, Gatekeeper acceptance, and that the signer is the expected Apple
+#   3. VERIFIES it before installing: strict codesign, a Gatekeeper assessment
+#      of "Notarized Developer ID", and that the signer is the expected Apple
 #      Developer Team. It refuses to install anything that fails — a compromised
 #      feed cannot make it install someone else's app.
+#
+#      Every one of those checks uses a tool that ships with macOS. Nothing here
+#      requires the Xcode Command Line Tools, which a fresh Mac does not have —
+#      requiring them once turned "I couldn't check" into a false "no valid
+#      notarization ticket" refusal, and `xcrun` can even pop a developer-tools
+#      install dialog, which an installer must never do.
 #   4. Installs to /Applications and launches it.
 #
 # It never uses sudo, never disables Gatekeeper, and never strips quarantine to
@@ -29,7 +35,7 @@
 # ============================================================================
 set -euo pipefail
 
-PMON_INSTALLER_VERSION="1.1.0"
+PMON_INSTALLER_VERSION="1.2.0"
 
 APP="PurpleMonitor"
 FEED_URL="https://raw.githubusercontent.com/bronty13/phantomlives-releases/main/PurpleMonitor/appcast.xml"
@@ -116,14 +122,35 @@ TEAM="$(codesign -dv "$NEW_APP" 2>&1 | sed -n 's/^TeamIdentifier=//p' | head -1)
   This is what a hijacked feed would look like. NOT installing."
 note "signed by the expected developer ($TEAM) ✓"
 
-xcrun stapler validate "$NEW_APP" >/dev/null 2>&1 \
-    || die "no valid notarization ticket — NOT installing."
-note "notarized by Apple ✓"
+# Gatekeeper's own assessment is the authoritative notarization check, and `spctl` ships with
+# every macOS install. On a stapled build it answers offline.
+#
+# This — not `stapler` — must be the gate. `xcrun stapler` needs the Xcode Command Line Tools,
+# which a fresh Mac does not have, so requiring it turned "I couldn't check" into a hard
+# "no valid notarization ticket" refusal on a perfectly good build. Worse, invoking `xcrun`
+# without those tools can itself raise a "install developer tools?" dialog — an installer must
+# never do that.
+ASSESSMENT="$(/usr/sbin/spctl -a -vv -t exec "$NEW_APP" 2>&1 || true)"
+case "$ASSESSMENT" in
+    *"Notarized Developer ID"*)
+        note "notarized by Apple, accepted by Gatekeeper ✓" ;;
+    *accepted*)
+        die "accepted by Gatekeeper but NOT notarized — NOT installing.
+  Every official release is notarized, so this build is not one of ours.
+$(printf '%s' "$ASSESSMENT" | sed 's/^/    /')" ;;
+    *)
+        die "Gatekeeper rejects this build — NOT installing.
+$(printf '%s' "$ASSESSMENT" | sed 's/^/    /')" ;;
+esac
 
-if spctl -a -t exec "$NEW_APP" >/dev/null 2>&1; then
-    note "Gatekeeper: accepted ✓"
-else
-    die "Gatekeeper rejects this build — NOT installing."
+# Belt-and-braces, and only when the tools happen to be present. `xcode-select -p` is used to
+# detect them because it exits non-zero quietly rather than prompting.
+if /usr/bin/xcode-select -p >/dev/null 2>&1 && /usr/bin/xcrun --find stapler >/dev/null 2>&1; then
+    if /usr/bin/xcrun stapler validate "$NEW_APP" >/dev/null 2>&1; then
+        note "notarization ticket stapled into the app ✓"
+    else
+        die "the app's stapled notarization ticket is invalid — NOT installing."
+    fi
 fi
 
 # ── Install ─────────────────────────────────────────────────────────────────
