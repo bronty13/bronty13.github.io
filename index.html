@@ -19,3 +19,15 @@
 <pre><code>curl -fsSL https://bronty13.github.io/bau | bash</code></pre>
 <p>This serves the same <code>bootstrap.sh</code> published to the release feed; it verifies
    its download against a SHA-256 checksum before installing anything.</p>
+<h2><code>/pmon</code> — PurpleMonitor</h2>
+<p>A Mac X-ray: scans macOS for security and health problems, explains every artifact
+   in plain English, and shows what changed since a known-good baseline. Needs macOS 14+.</p>
+<pre><code>curl -fsSL https://bronty13.github.io/pmon | bash</code></pre>
+<p>Installs to <code>/Applications</code>. It reads the app's own Sparkle release feed, so it
+   always installs the current version, then <strong>refuses to install</strong> unless the
+   download passes strict code-signature verification, carries a valid Apple notarization
+   ticket, is accepted by Gatekeeper, and is signed by the expected Apple Developer Team.
+   No <code>sudo</code>, and it never disables Gatekeeper.</p>
+<p>After installing, grant it Full Disk Access
+   (System Settings &rarr; Privacy &amp; Security &rarr; Full Disk Access) or most of the scan
+   can&rsquo;t run. Add <code>-s -- --to "$HOME/Applications"</code> to install for one user only.</p>
