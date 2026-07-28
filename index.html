@@ -6,28 +6,36 @@
   body { font: 16px/1.6 -apple-system, system-ui, sans-serif; max-width: 40rem; margin: 4rem auto; padding: 0 1.5rem; }
   code { background: #f4f4f5; padding: .15em .4em; border-radius: 4px; font-size: .9em; }
   pre { background: #f4f4f5; padding: 1rem; border-radius: 6px; overflow-x: auto; }
+  .lead { background: rgba(124,58,237,.08); border-left: 3px solid #7c3aed; padding: .75rem 1rem; border-radius: 0 6px 6px 0; }
   @media (prefers-color-scheme: dark) {
     body { background: #18181b; color: #e4e4e7; }
     code, pre { background: #27272a; }
   }
 </style>
-<h1>Install scripts</h1>
+
+<h1>Apps &amp; install scripts</h1>
+
+<h2>Download an app</h2>
+<p class="lead"><strong><a href="/purplemonitor/">PurpleMonitor</a></strong> — a Mac X-ray:
+   scan your Mac for security and health problems, and understand what everything is.
+   <br><em>Click that for a normal download-and-drag install.</em></p>
+
+<h2>Install from the Terminal</h2>
 <p>Short, typeable URLs for tools published from
-   <a href="https://github.com/bronty13/phantomlives-releases">phantomlives-releases</a>.</p>
-<h2><code>/bau</code> — brew-autoupdate</h2>
-<p>Scheduled Homebrew updates on macOS, with logs and a <code>brew-logs</code> viewer.</p>
-<pre><code>curl -fsSL https://bronty13.github.io/bau | bash</code></pre>
-<p>This serves the same <code>bootstrap.sh</code> published to the release feed; it verifies
-   its download against a SHA-256 checksum before installing anything.</p>
-<h2><code>/pmon</code> — PurpleMonitor</h2>
-<p>A Mac X-ray: scans macOS for security and health problems, explains every artifact
-   in plain English, and shows what changed since a known-good baseline. Needs macOS 14+.</p>
+   <a href="https://github.com/bronty13/phantomlives-releases">phantomlives-releases</a>.
+   Paste these into <strong>Terminal</strong> — they are commands, not download links.</p>
+
+<h3><code>/pmon</code> — PurpleMonitor</h3>
 <pre><code>curl -fsSL https://bronty13.github.io/pmon | bash</code></pre>
-<p>Installs to <code>/Applications</code>. It reads the app's own Sparkle release feed, so it
-   always installs the current version, then <strong>refuses to install</strong> unless the
+<p>Installs to <code>/Applications</code> and launches. It reads the app's own release feed, so
+   it always installs the current version, then <strong>refuses to install</strong> unless the
    download passes strict code-signature verification, carries a valid Apple notarization
    ticket, is accepted by Gatekeeper, and is signed by the expected Apple Developer Team.
-   No <code>sudo</code>, and it never disables Gatekeeper.</p>
-<p>After installing, grant it Full Disk Access
-   (System Settings &rarr; Privacy &amp; Security &rarr; Full Disk Access) or most of the scan
-   can&rsquo;t run. Add <code>-s -- --to "$HOME/Applications"</code> to install for one user only.</p>
+   No <code>sudo</code>, and it never disables Gatekeeper. Prefer clicking?
+   Use the <a href="/purplemonitor/">download page</a> instead.</p>
+
+<h3><code>/bau</code> — brew-autoupdate</h3>
+<pre><code>curl -fsSL https://bronty13.github.io/bau | bash</code></pre>
+<p>Scheduled Homebrew updates on macOS, with logs and a <code>brew-logs</code> viewer.
+   This serves the same <code>bootstrap.sh</code> published to the release feed; it verifies
+   its download against a SHA-256 checksum before installing anything.</p>
