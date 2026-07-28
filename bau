@@ -4,7 +4,7 @@
 #  BREW-AUTOUPDATE PUBLIC BOOTSTRAP INSTALLER
 #
 #  File:     bootstrap.sh
-#  Version:  2.7.0
+#  Version:  2.7.1
 #  License:  MIT
 #  Requires: macOS, Homebrew, bash 3.2+, curl, tar, shasum
 #
@@ -23,6 +23,12 @@
 #    script reuses that feed rather than introducing a second channel.
 #
 #  Usage — the public one-liner:
+#
+#    curl -fsSL https://bronty13.github.io/bau | bash
+#
+#    That short URL is a GitHub Pages mirror of this file, pushed and
+#    version-verified by release.sh in the same run that publishes the feed.
+#    The release-asset path serves the identical bytes and works too:
 #
 #    curl -fsSL https://github.com/bronty13/phantomlives-releases/releases/download/brew-autoupdate-updater-feed/bootstrap.sh | bash
 #
@@ -60,7 +66,7 @@ set -euo pipefail
 # ============================================================================
 # Must match BAU_VERSION in brew-autoupdate.sh, brew-autoupdate-viewer.sh,
 # and install.sh — release.sh refuses to publish if they disagree.
-BAU_VERSION="2.7.0"
+BAU_VERSION="2.7.1"
 
 # ============================================================================
 # FEED
@@ -102,6 +108,11 @@ brew-autoupdate bootstrap installer v${BAU_VERSION}
 Fetches the current brew-autoupdate release from the public feed, verifies
 its checksum, and runs the real installer from it. Use this on a machine
 with no checkout of the source repository.
+
+  curl -fsSL https://bronty13.github.io/bau | bash
+
+That short URL mirrors the release asset (identical bytes, published and
+version-checked in the same release run). The long form works too:
 
   curl -fsSL ${FEED_URL}/bootstrap.sh | bash
 
