@@ -4,7 +4,7 @@
 #  BREW-AUTOUPDATE PUBLIC BOOTSTRAP INSTALLER
 #
 #  File:     bootstrap.sh
-#  Version:  2.7.1
+#  Version:  2.8.0
 #  License:  MIT
 #  Requires: macOS, Homebrew, bash 3.2+, curl, tar, shasum
 #
@@ -66,7 +66,7 @@ set -euo pipefail
 # ============================================================================
 # Must match BAU_VERSION in brew-autoupdate.sh, brew-autoupdate-viewer.sh,
 # and install.sh — release.sh refuses to publish if they disagree.
-BAU_VERSION="2.7.1"
+BAU_VERSION="2.8.0"
 
 # ============================================================================
 # FEED
