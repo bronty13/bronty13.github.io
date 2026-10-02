@@ -66,7 +66,7 @@ set -euo pipefail
 # ============================================================================
 # Must match BAU_VERSION in brew-autoupdate.sh, brew-autoupdate-viewer.sh,
 # and install.sh — release.sh refuses to publish if they disagree.
-BAU_VERSION="2.9.0"
+BAU_VERSION="2.10.0"
 
 # ============================================================================
 # FEED
